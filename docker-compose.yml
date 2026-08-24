@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rmq_highload
+    ports:
+      - "5672:5672"   
+      - "15672:15672" 
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: ch_highload
+    ports:
+      - "8123:8123" # HTTP 
+      - "9000:9000" # Native port
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
