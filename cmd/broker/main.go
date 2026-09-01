@@ -1,79 +1,97 @@
 package main
 
 import (
+	"broker/internal/domain"
+	ch_infra "broker/internal/infrastructure/clickhouse"
+	"broker/internal/infrastructure/postgres"
+	"broker/internal/infrastructure/rabbitmq"
+	"broker/internal/usecase"
 	"context"
-	"database/sql"
-	"log"
 	"log/slog"
-	"marketplace_broker/internal/domain"
-	"marketplace_broker/internal/infrastructure/clickhouse"
-	"marketplace_broker/internal/infrastructure/ones"
-	"marketplace_broker/internal/infrastructure/rabbitmq"
-	"marketplace_broker/internal/infrastructure/router"
-	"marketplace_broker/internal/usecase"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
-	_ "github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2"
 	_ "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	_ "github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func main() {
-	cfg, _ := domain.LoadConfig()
+	/////////// INIT CONFIG ///////////
+	cfg, err := domain.LoadConfig()
+	if err != nil {
+		slog.Error("Config load error:", "err", err)
+		return
+	}
 	/////////// INIT CONTEXT ///////////
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	/////////// INIT CONNECTIONS ///////////
-	// Clickhouse
-	chConn, err := sql.Open("clickhouse", cfg.ClickHouseDSN)
+	// 1. PostgreSQL (pgx/v5)
+	pgConfig, err := pgxpool.ParseConfig(cfg.Postgres.DSN())
 	if err != nil {
-		slog.Error("ClickHouse init error: ", "err", err)
+		slog.Error("Failed to parse Postgres DSN", "err", err)
+		return
+	}
+	pgConfig.MaxConns = 20 
+	pgConfig.MinConns = 5
+	pgConfig.MaxConnLifetime = time.Hour
+
+	pgPool, err := pgxpool.NewWithConfig(ctx, pgConfig)
+	if err != nil {
+		slog.Error("Postgres connection pool initialization failed", "err", err)
+		return
+	}
+	defer pgPool.Close()
+
+	// Clickhouse
+	chConn, err := clickhouse.Open(&clickhouse.Options{
+		Addr: []string{cfg.ClickHouse.Host + ":" + strconv.Itoa(cfg.ClickHouse.Port)},
+		Auth: clickhouse.Auth{
+			Database: cfg.ClickHouse.Database,
+			Username: cfg.ClickHouse.User,
+			Password: cfg.ClickHouse.Password,
+		},
+		DialTimeout: cfg.ClickHouse.Timeout,
+	})
+	if err != nil {
+		slog.Error("ClickHouse native connection failed", "err", err)
+		return
 	}
 	defer chConn.Close()
 
-	chConn.SetMaxOpenConns(20)
-	chConn.SetMaxIdleConns(20)
-	chConn.SetConnMaxLifetime(time.Hour)
-
-	if err := chConn.PingContext(ctx); err != nil{
-		log.Fatalf("Clickhouse ping failed: %v", err)
-	}
-	slog.Info("Successfully connected to Clickhouse")
-	
 	// RabbitMQ
-	conn, err := amqp.Dial(cfg.RabbitMQURL)
+	rmqConn, err := amqp.Dial(cfg.RabbitMQ.URL())
 	if err != nil {
-		slog.Error("RabbitMQ connection error: ", "err", err)
+		slog.Error("RabbitMQ amqp dial failed", "err", err)
+		return
 	}
-	defer conn.Close()
+	defer rmqConn.Close()
 
-	ch, err := conn.Channel()
+	rmqCh, err := rmqConn.Channel()
 	if err != nil {
-		slog.Error("RabbitMQ channel error: ", "err", err)
+		slog.Error("Failed to open RabbitMQ channel", "err", err)
+		return
 	}
-	defer ch.Close()
+	defer rmqCh.Close()
+
 	/////////// INIT INSTRUMENTS ///////////
-	batchCfg := domain.BatchConfig{
-		Size:    cfg.BatchSize,
-		Timeout: cfg.BatchTimeoutMS,
-	}
+	postgresRepo := postgres.NewBalanceRepository(pgPool)
+	clickhouseRepo := ch_infra.NewSalesRepository(chConn)
+	rabbitmqBroker := rabbitmq.NewRabbitMQBroker(rmqCh, "1c_requests")
 
-	// 4. Внедрение зависимостей (Dependency Injection) 
-	rtr := router.NewDataRouterAdapter()
-	oneCDriver := ones.NewOneCDriver("http://1c-server/erp/hs/custom_broker/v1/batch", 6)
-	rtr.RegisterDriver("1c_erp", oneCDriver)
-
-	rtr.RegisterDriver("clickhouse", clickhouse.NewClickHouseDriver(chConn))
-
-	broker, err := rabbitmq.NewRabbitMQBroker(ch, "1c_requests", "1c_responses", batchCfg.Size*2)
-	if err != nil {
-		slog.Error("Broker init error:", "err", err)
-	}
-	
-	processor := usecase.NewBatchProcessorUsecase(rtr, broker, batchCfg)
+	processor := usecase.NewBatchProcessor(
+		rabbitmqBroker,
+		clickhouseRepo,
+		postgresRepo,
+		cfg.Batch.Size,
+		cfg.Batch.Timeout,
+	)
 
 	/////////// GRACEFUL SHUTDOWN ///////////
 	go func() {
