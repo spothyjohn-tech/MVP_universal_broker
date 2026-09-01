@@ -21,8 +21,8 @@
 Тестирование проводилось на процессоре **Intel(R) Core(TM) i5-9500F CPU @ 3.00GHz** в условиях полной изоляции от дискового I/O (In-Memory Hot Pipeline) для замера чистой пропускной способности архитектуры и нативных бинарных драйверов.
 
 ```bash
-Benchmark_MaxThroughputIngestion_50M-6          1      2236459400 ns/op      67695720 B/op     651388 allocs/op
-Benchmark_ClickHouseAnalyticsToPostgresUpsert-6  5       241716940 ns/op       7684627 B/op     120327 allocs/op
+Benchmark_MaxThroughputIngestion_50M-6                         4         282081050 ns/op        54760716 B/op     650866 allocs/op
+Benchmark_ClickHouseAnalyticsToPostgresUpsert-6                5         219981460 ns/op         7674456 B/op     120322 allocs/op
 ```
 
 ### Разбор результатов:
