@@ -94,15 +94,19 @@ func main() {
 	)
 
 	/////////// GRACEFUL SHUTDOWN ///////////
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+
 	go func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		<-sigChan
-		slog.Info("Shutting down worker gracefully...")
-		cancel()
+		slog.Info("Highload Clean Architecture Worker is running...")
+		if err := processor.Execute(ctx); err != nil && err != context.Canceled {
+			slog.Error("Worker execution error: ", "err", err)
+		}
 	}()
-	slog.Info("Highload Clean Architecture Worker is running...")
-	if err := processor.Execute(ctx); err != nil && err != context.Canceled {
-		slog.Error("Worker execution error: ", "err", err)
-	}
+	<-sigChan
+	slog.Info("Shutting down worker gracefully...")
+	cancel()
+	time.Sleep(500 * time.Millisecond) 
+	slog.Info("Worker stopped. Closing connections...")
 }

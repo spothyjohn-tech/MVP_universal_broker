@@ -2,7 +2,7 @@ package domain
 
 import "time"
 
-// SalesPayload описывает структуру транзакции продажи
+
 type SalesPayload struct {
 	ID          string    `json:"id"`
 	ProductID   string    `json:"product_id"`
@@ -13,7 +13,7 @@ type SalesPayload struct {
 	Period      time.Time `json:"period"`
 }
 
-// StocksPayload описывает структуру остатка товара
+
 type StocksPayload struct {
 	ID           string    `json:"id"`
 	ProductID    string    `json:"product_id"`
@@ -22,7 +22,7 @@ type StocksPayload struct {
 	Period       time.Time `json:"period"`
 }
 
-// BatchData — контейнер, разделяющий пачку на строго типизированные слайсы
+
 type BatchData struct {
 	Sales  []SalesPayload
 	Stocks []StocksPayload

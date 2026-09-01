@@ -42,11 +42,9 @@ func prepareHotInMemoryBatch(size int) ([]domain.SalesPayload, []domain.StocksPa
 	return sales, stocks
 }
 
-// БЕНЧМАРК 1: Измерение чистой скорости параллельной Highload-записи батчами (Тест на 50 млн строк)
 func Benchmark_MaxThroughputIngestion_50M(b *testing.B) {
 	ctx := context.Background()
-
-	// Нативные пулы из инфраструктурного слоя, аналогично main.go
+	
 	pgPool, err := pgxpool.New(ctx, "postgres://postgres:postgres@localhost:5432/test?sslmode=disable&pool_max_conns=40")
 	if err != nil {
 		b.Fatalf("Postgres connection pool failed: %v", err)
@@ -62,25 +60,17 @@ func Benchmark_MaxThroughputIngestion_50M(b *testing.B) {
 	}
 	defer chConn.Close()
 
-	// Инициализируем репозитории
 	pgRepo := pg_infra.NewBalanceRepository(pgPool)
 	chRepo := ch_infra.NewSalesRepository(chConn)
 
-	// Аллоцируем тестовый батч в RAM (размер пачки 50 000 строк)
 	chunkSize := 50000
 	salesBatch, stocksBatch := prepareHotInMemoryBatch(chunkSize)
-
-	// Сбрасываем таймер: время подготовки данных в RAM не должно портить статистику чистой записи в СУБД
 	b.ResetTimer() 
-
-	// Запускаем параллельные потоки, симулируя конкурентную работу горутин UseCase
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			// Замеряем нативный бинарный COPY в Postgres временную таблицу + UPSERT
 			if err := pgRepo.UpsertBalancesBulk(ctx, stocksBatch); err != nil {
 				b.Fatalf("Postgres Bulk UPSERT via CopyFrom failed: %v", err)
 			}
-			// Замеряем бинарный PrepareBatch в ClickHouse
 			if err := chRepo.SaveSalesBulk(ctx, salesBatch); err != nil {
 				b.Fatalf("Clickhouse PrepareBatch Send failed: %v", err)
 			}
@@ -88,7 +78,6 @@ func Benchmark_MaxThroughputIngestion_50M(b *testing.B) {
 	})
 }
 
-// БЕНЧМАРК 2: Аналитическое агрегирование из ClickHouse -> Высокоскоростной экспорт в Postgres
 func Benchmark_ClickHouseAnalyticsToPostgresUpsert(b *testing.B) {
 	ctx := context.Background()
 
@@ -109,7 +98,6 @@ func Benchmark_ClickHouseAnalyticsToPostgresUpsert(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		// ClickHouse выполняет тяжелую агрегацию по миллионам строк мгновенно в RAM
 		query := `
 		SELECT product_id, warehouse_id, toInt32(SUM(count)), max(period) 
 		FROM sales 
@@ -129,18 +117,14 @@ func Benchmark_ClickHouseAnalyticsToPostgresUpsert(b *testing.B) {
 				rows.Close()
 				b.Fatalf("Rows scan failed: %v", err)
 			}
-
-			// Формируем чистый доменный слайс остатков для Postgres
 			aggregatedStocks = append(aggregatedStocks, domain.StocksPayload{
 				ProductID:    pID,
 				WarehouseID:  wID,
 				CurrentStock: totalCount,
-				Period:       maxPeriod, // Сохраняем точный исторический таймштамп для логики UPSERT!
+				Period:       maxPeriod, 
 			})
 		}
 		rows.Close()
-
-		// Пишем пачку сагрегированных результатов в Postgres через COPY протокол pgx
 		if len(aggregatedStocks) > 0 {
 			if err := pgRepo.UpsertBalancesBulk(ctx, aggregatedStocks); err != nil {
 				b.Fatalf("Postgres unlogged temp table upsert failed: %v", err)

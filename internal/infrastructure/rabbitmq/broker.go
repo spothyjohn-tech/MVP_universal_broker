@@ -19,28 +19,11 @@ func NewRabbitMQBroker(ch *amqp.Channel, queue string) *RabbitMQBroker {
 	return &RabbitMQBroker{ch: ch, queue: queue}
 }
 
-// Вспомогательная структура для парсинга обертки сообщения из очереди
 type rawMessage struct {
 	Action  string `json:"action"`
 	Payload string `json:"payload"`
 }
-type salesWire struct {
-	ID          string  `json:"id"`
-	ProductID   string  `json:"product_id"`
-	ClientId    string  `json:"client_id"`
-	WarehouseID string  `json:"warehouse_id"`
-	Count       uint32  `json:"count"`
-	Price       float64 `json:"price"`
-	Period      string  `json:"period"` // Сетевой формат даты (string)
-}
 
-type stocksWire struct {
-	ID           string `json:"id"`
-	ProductID    string `json:"product_id"`
-	WarehouseID  string `json:"warehouse_id"`
-	CurrentStock uint32 `json:"current_stock"`
-	Period       time.Time `json:"period"` // Или строка в зависимости от 1С
-}
 
 func (b *RabbitMQBroker) ConsumeBatch(ctx context.Context, batchSize int, timeout time.Duration) (*domain.BatchData, []uint64, error) {
 	err := b.ch.Qos(batchSize*2,0,false)
@@ -63,7 +46,7 @@ func (b *RabbitMQBroker) ConsumeBatch(ctx context.Context, batchSize int, timeou
 	for {
 		select {
 		case <-ctx.Done():
-			return nil,nil,ctx.Err()
+			return batchData, deliveryTags, ctx.Err()
 		case msg, ok := <-deliveries:
 			if !ok {
 				return  nil, nil, fmt.Errorf("rabbitmq channel closed")
@@ -76,19 +59,14 @@ func (b *RabbitMQBroker) ConsumeBatch(ctx context.Context, batchSize int, timeou
 			}
 			switch raw.Action{
 			case "insert_sales":
-				var wireData []salesWire
+				var wireData []domain.SalesPayload
 				if err := json.Unmarshal([]byte(raw.Payload),&wireData); err != nil{
 					_ = msg.Reject(false)
 					continue
 				}
-				for _, w := range wireData {
-					t, _ := time.Parse("2006-01-02 15:04:05", w.Period)
-					batchData.Sales = append(batchData.Sales, domain.SalesPayload{
-						ID: w.ID, ProductID: w.ProductID, ClientId: w.ClientId, WarehouseID: w.WarehouseID, Count: w.Count, Price: w.Price, Period: t,
-					})
-				}
+				batchData.Sales = append(batchData.Sales, wireData...)
 			case "insert_stocks":
-				var stocks []domain.StocksPayload // Если 1С шлет сразу ISO время
+				var stocks []domain.StocksPayload 
 				if err := json.Unmarshal([]byte(raw.Payload), &stocks); err != nil {
 					_ = msg.Reject(false)
 					continue
