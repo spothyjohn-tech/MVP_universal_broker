@@ -25,12 +25,13 @@ func (r *SalesRepository) SaveSalesBulk(ctx context.Context, sales []domain.Sale
 	if err != nil {
 		return fmt.Errorf("ch prepare sales batch failed: %w", err)
 	}
-	for _, s := range sales {
+
+	for i := range sales {
 		var clientID interface{} = nil
-		if s.ClientId != "" {
-			clientID = s.ClientId
+		if sales[i].ClientId != "" {
+			clientID = sales[i].ClientId
 		}
-		err = batch.Append(s.ID, s.ProductID, clientID, s.WarehouseID, s.Count, s.Price, s.Period)
+		err = batch.Append(sales[i].ID, sales[i].ProductID, clientID, sales[i].WarehouseID, sales[i].Count, sales[i].Price, sales[i].Period)
 		if err != nil {
 			return fmt.Errorf("ch append sales row failed: %w", err)
 		}
@@ -39,7 +40,7 @@ func (r *SalesRepository) SaveSalesBulk(ctx context.Context, sales []domain.Sale
 }
 
 func (r *SalesRepository) SaveStocksBulk(ctx context.Context, stocks []domain.StocksPayload) error {
-	if len(stocks) > 0 {
+	if len(stocks) == 0 {
 		return nil
 	}
 
@@ -47,8 +48,8 @@ func (r *SalesRepository) SaveStocksBulk(ctx context.Context, stocks []domain.St
 	if err != nil {
 		return fmt.Errorf("ch prepare stocks batch failed: %w", err)
 	}
-	for _, s := range stocks {
-		err := batch.Append(s.ID, s.ProductID, s.WarehouseID, s.CurrentStock, s.Period)
+	for i := range stocks {
+		err := batch.Append(stocks[i].ID, stocks[i].ProductID, stocks[i].WarehouseID, stocks[i].CurrentStock, stocks[i].Period)
 		if err != nil {
 			return fmt.Errorf("ch append stocks row failed: %w", err)
 		}

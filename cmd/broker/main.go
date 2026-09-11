@@ -22,20 +22,20 @@ import (
 )
 
 func main() {
-	/////////// INIT CONFIG ///////////
+	// Initialize core application configuration layers using cleanenv.
 	cfg, err := domain.LoadConfig()
 	if err != nil {
-		slog.Error("Config load error:", "err", err)
+		slog.Error("Process boot failure: environment configuration configuration parsing crashed", "err", err)
 		return
 	}
-	/////////// INIT CONTEXT ///////////
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	/////////// INIT CONNECTIONS ///////////
-	// 1. PostgreSQL (pgx/v5)
+
+	// Establish connection pool to operational PostgreSQL server instance.
 	pgConfig, err := pgxpool.ParseConfig(cfg.Postgres.DSN())
 	if err != nil {
-		slog.Error("Failed to parse Postgres DSN", "err", err)
+		slog.Error("Database subsystem failure: parsing PostgreSQL DSN variables failed", "err", err)
 		return
 	}
 	pgConfig.MaxConns = 20 
@@ -44,12 +44,12 @@ func main() {
 
 	pgPool, err := pgxpool.NewWithConfig(ctx, pgConfig)
 	if err != nil {
-		slog.Error("Postgres connection pool initialization failed", "err", err)
+		slog.Error("Database subsystem failure: opening PostgreSQL transaction socket pool aborted", "err", err)
 		return
 	}
 	defer pgPool.Close()
 
-	// Clickhouse
+	// Establish native connection protocol to columnar analytical ClickHouse server cluster.	
 	chConn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{cfg.ClickHouse.Host + ":" + strconv.Itoa(cfg.ClickHouse.Port)},
 		Auth: clickhouse.Auth{
@@ -60,27 +60,27 @@ func main() {
 		DialTimeout: cfg.ClickHouse.Timeout,
 	})
 	if err != nil {
-		slog.Error("ClickHouse native connection failed", "err", err)
+		slog.Error("Analytics subsystem failure: native ClickHouse client transport initialization aborted", "err", err)
 		return
 	}
 	defer chConn.Close()
 
-	// RabbitMQ
+	// Connect to asynchronous message transport bus AMQP v0.9.1.
 	rmqConn, err := amqp.Dial(cfg.RabbitMQ.URL())
 	if err != nil {
-		slog.Error("RabbitMQ amqp dial failed", "err", err)
+		slog.Error("Transport network failure: broker handshake execution failed via AMQP protocol", "err", err)
 		return
 	}
 	defer rmqConn.Close()
 
 	rmqCh, err := rmqConn.Channel()
 	if err != nil {
-		slog.Error("Failed to open RabbitMQ channel", "err", err)
+		slog.Error("Transport network failure: structural virtual channel extraction from AMQP link failed", "err", err)
 		return
 	}
 	defer rmqCh.Close()
 
-	/////////// INIT INSTRUMENTS ///////////
+	// Dependency Injection: Bind adapter objects into доменные abstraction layers.
 	postgresRepo := postgres.NewBalanceRepository(pgPool)
 	clickhouseRepo := ch_infra.NewSalesRepository(chConn)
 	rabbitmqBroker := rabbitmq.NewRabbitMQBroker(rmqCh, "1c_requests")
@@ -93,20 +93,20 @@ func main() {
 		cfg.Batch.Timeout,
 	)
 
-	/////////// GRACEFUL SHUTDOWN ///////////
+	// Intercept operating system termination interrupts to toggle the Graceful Shutdown flow sequence.
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 
 	go func() {
-		slog.Info("Highload Clean Architecture Worker is running...")
+		slog.Info("Highload Clean Architecture Worker kernel successfully initialized and running.")
 		if err := processor.Execute(ctx); err != nil && err != context.Canceled {
-			slog.Error("Worker execution error: ", "err", err)
+			slog.Error("Pipeline processing failure: engine encountered a critical lifecycle execution error", "err", err)
 		}
 	}()
 	<-sigChan
-	slog.Info("Shutting down worker gracefully...")
-	cancel()
+	slog.Info("Termination interceptor triggered. Shutting down streaming infrastructure channels cleanly...")
+	cancel() // Cancel context to signal downstream worker threads to conclude tasks.
 	time.Sleep(500 * time.Millisecond) 
-	slog.Info("Worker stopped. Closing connections...")
+	slog.Info("Ingestion server node completely stopped. Resources detached successfully.")
 }

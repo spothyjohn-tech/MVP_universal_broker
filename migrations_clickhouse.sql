@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS sales (
     product_id String,
     client_id Nullable(String),
     warehouse_id String,
-    count UInt32,
+    count float,
     price float,
     period DateTime
 ) ENGINE = MergeTree()
@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS stocks (
     id String,
     product_id String,
     warehouse_id String,
-    current_stock Int32,
+    current_stock float,
     period DateTime
 ) ENGINE = MergeTree()
 ORDER BY (period, product_id);

@@ -1,11 +1,11 @@
 package postgres
 
 import (
+	"broker/internal/domain"
 	"context"
 	"fmt"
-	"broker/internal/domain"
+	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,53 +21,37 @@ func (r *BalanceRepository) UpsertBalancesBulk(ctx context.Context, stocks []dom
 	if len(stocks) == 0 {
 		return nil
 	}
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("pgx begin tx failed: %w", err)
-	}
-	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `CREATE TEMP TABLE temp_stock_balances (
-		product_id VARCHAR(255),
-		warehouse_id VARCHAR(255),
-		current_stock INT,
-		period TIMESTAMP
-	) ON COMMIT DROP;`)
-	if err != nil {
-		return fmt.Errorf("create temp table failed: %w", err)
-	}
-	rows := make([][]interface{}, len(stocks))
-	for i, s := range stocks{
-		rows[i] = []interface{}{s.ProductID, s.WarehouseID, s.CurrentStock, s.Period}
-	}
-	_, err = tx.CopyFrom(
-		ctx,
-		pgx.Identifier{"temp_stock_balances"},
-		[]string{"product_id", "warehouse_id", "current_stock", "period"},
-		pgx.CopyFromRows(rows),
-	)
-	if err != nil {
-		return fmt.Errorf("pgx copy from failed: %w", err)
-	}
-	_, err = tx.Exec(ctx, `
-	INSERT INTO stock_tables (product_id, warehouse_id, current_stock, updated_at)
-	SELECT 
-		product_id, 
-		warehouse_id, 
-		SUM(current_stock) as current_stock, 
-		MAX(updated_at) 
-	FROM temp_stock_balances
-	GROUP BY product_id, warehouse_id
-	ON CONFLICT (product_id, warehouse_id)
-	DO UPDATE SET 
-		current_stock = stock_tables.current_stock + EXCLUDED.current_stock,
-		updated_at = CASE 
-			WHEN EXCLUDED.updated_at > stock_tables.updated_at THEN EXCLUDED.updated_at 
-			ELSE stock_tables.updated_at 
-		END;
-`)
-	if err != nil {
-		return fmt.Errorf("temp to target upsert failed: %w", err)
+
+	productIDs := make([]string, len(stocks))
+	warehouseIDs := make([]string, len(stocks))
+	currentStocks := make([]float64, len(stocks)) 
+	updatedAtTimestamps := make([]time.Time, len(stocks))
+
+	for i := range stocks {
+		productIDs[i] = stocks[i].ProductID
+		warehouseIDs[i] = stocks[i].WarehouseID
+		currentStocks[i] = stocks[i].CurrentStock
+		updatedAtTimestamps[i] = stocks[i].Period
 	}
 
-	return tx.Commit(ctx)
+	query := `
+		INSERT INTO stock_tables (product_id, warehouse_id, current_stock, updated_at)
+		SELECT p, w, SUM(s), MAX(u)
+		FROM unnest($1::varchar[], $2::varchar[], $3::numeric[], $4::timestamp[]) 
+		AS data(p, w, s, u)
+		GROUP BY p, w
+		ON CONFLICT (product_id, warehouse_id) 
+		DO UPDATE SET 
+			current_stock = stock_tables.current_stock + EXCLUDED.current_stock,
+			updated_at = CASE 
+				WHEN EXCLUDED.updated_at > stock_tables.updated_at THEN EXCLUDED.updated_at
+				ELSE stock_tables.updated_at
+			END;
+	`
+	_, err := r.pool.Exec(ctx, query, productIDs, warehouseIDs, currentStocks, updatedAtTimestamps)
+	if err != nil {
+		return fmt.Errorf("bulk upsert via unnest failed: %w", err)
+	}
+
+	return nil
 }
