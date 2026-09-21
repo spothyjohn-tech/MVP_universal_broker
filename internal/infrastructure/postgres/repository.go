@@ -4,17 +4,38 @@ import (
 	"broker/internal/domain"
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type poolBucket struct {
+	productIDs          []string
+	warehouseIDs        []string
+	currentStocks       []float64
+	updatedAtTimestamps []time.Time
+}
+
 type BalanceRepository struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	bPool *sync.Pool
 }
 
 func NewBalanceRepository(pool *pgxpool.Pool) *BalanceRepository {
-	return &BalanceRepository{pool: pool}
+	return &BalanceRepository{
+		pool: pool,
+		bPool: &sync.Pool{
+			New: func() interface{} {
+				return &poolBucket{
+					productIDs:          make([]string, 0, 1000),
+					warehouseIDs:        make([]string, 0, 1000),
+					currentStocks:       make([]float64, 0, 1000),
+					updatedAtTimestamps: make([]time.Time, 0, 1000),
+				}
+			},
+		},
+	}
 }
 
 func (r *BalanceRepository) UpsertBalancesBulk(ctx context.Context, stocks []domain.StocksPayload) error {
@@ -22,10 +43,23 @@ func (r *BalanceRepository) UpsertBalancesBulk(ctx context.Context, stocks []dom
 		return nil
 	}
 
-	productIDs := make([]string, len(stocks))
-	warehouseIDs := make([]string, len(stocks))
-	currentStocks := make([]float64, len(stocks)) 
-	updatedAtTimestamps := make([]time.Time, len(stocks))
+	// productIDs := make([]string, len(stocks))
+	// warehouseIDs := make([]string, len(stocks))
+	// currentStocks := make([]float64, len(stocks))
+	// updatedAtTimestamps := make([]time.Time, len(stocks))
+	bucket := r.bPool.Get().(*poolBucket)
+	
+	if len(stocks) > len(bucket.productIDs) {
+		bucket.productIDs = make([]string, len(stocks))
+		bucket.warehouseIDs = make([]string, len(stocks))
+		bucket.currentStocks = make([]float64, len(stocks))
+		bucket.updatedAtTimestamps = make([]time.Time, len(stocks))
+	}
+
+	productIDs := bucket.productIDs[:len(stocks)]
+	warehouseIDs := bucket.warehouseIDs[:len(stocks)]
+	currentStocks := bucket.currentStocks[:len(stocks)]
+	updatedAtTimestamps := bucket.updatedAtTimestamps[:len(stocks)]
 
 	for i := range stocks {
 		productIDs[i] = stocks[i].ProductID
@@ -33,6 +67,13 @@ func (r *BalanceRepository) UpsertBalancesBulk(ctx context.Context, stocks []dom
 		currentStocks[i] = stocks[i].CurrentStock
 		updatedAtTimestamps[i] = stocks[i].Period
 	}
+
+	// bucket.productIDs = productIDs
+	// bucket.warehouseIDs = warehouseIDs
+	// bucket.currentStocks = currentStocks
+	// bucket.updatedAtTimestamps = updatedAtTimestamps
+
+	defer r.bPool.Put(bucket)
 
 	query := `
 		INSERT INTO stock_tables (product_id, warehouse_id, current_stock, updated_at)
