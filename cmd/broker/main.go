@@ -180,7 +180,13 @@ func runWorkerLoop(ctx context.Context, cfg *domain.AppConfig, clichouseRepo dom
 			if !sleepContext(ctx, 5*time.Second) { return }
 			continue
 		}
-		rabbitmqBroker := rabbitmq.NewRabbitMQBroker(rmqCh, "1c_requests")
+		rabbitmqBroker, err := rabbitmq.NewRabbitMQBroker(rmqCh, "1c_requests")
+		if err != nil {
+			slog.Error("RabbitMQ channel creation failed, retrying...", "err", err)
+			rmqConn.Close()
+			if !sleepContext(ctx, 5*time.Second) { return }
+			continue
+		}
 		processor := usecase.NewBatchProcessor(
 			rabbitmqBroker,
 			clichouseRepo,

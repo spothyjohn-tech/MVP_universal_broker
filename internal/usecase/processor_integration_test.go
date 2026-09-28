@@ -26,9 +26,12 @@ type realtimeIntegrationBroker struct {
 
 func (b *realtimeIntegrationBroker) StartConsuming(ctx context.Context, batchSize int) (<-chan domain.Message, error) {
 	ch := make(chan domain.Message, len(b.messages))
-	for _, msg := range b.messages {
-		ch <- msg
-	}
+	go func() {
+		defer close(ch)
+		for _, msg := range b.messages {
+			ch <- msg
+		}
+	}()
 	return ch, nil
 }
 
@@ -38,6 +41,14 @@ func (b *realtimeIntegrationBroker) AcknowledgeBatch(ctx context.Context, delive
 }
 
 func (b *realtimeIntegrationBroker) RejectToDLQ(ctx context.Context, deliveryTag uint64) error {
+	return nil
+}
+
+func (b *realtimeIntegrationBroker) RejectBatchToDLQ(ctx context.Context, deliveryTag []uint64) error {
+	return nil
+}
+
+func (b *realtimeIntegrationBroker) NackBatchForRetry(ctx context.Context, deliveryTag []uint64) error {
 	return nil
 }
 
@@ -73,6 +84,10 @@ func Test_Usecase_RealDatabase_Throughput(t *testing.T) {
 		t.Fatalf("Не удалось подключиться к ClickHouse: %v", err)
 	}
 	defer chConn.Close()
+
+	_, _ = pgPool.Exec(ctx, "TRUNCATE stock_tables;")
+	_ = chConn.Exec(ctx, "TRUNCATE TABLE stocks;")
+	_ = chConn.Exec(ctx, "TRUNCATE TABLE sales;")
 
 	totalMessages := 2000
 	recordsPerMessage := 50
@@ -127,20 +142,21 @@ func Test_Usecase_RealDatabase_Throughput(t *testing.T) {
 	processor := usecase.NewBatchProcessor(integrationBroker, realClickHouseRepo, realPostgresRepo, batchSize, 200*time.Millisecond)
 
 	t.Log(">>> Стартуем боевую запись на диск...")
-	startTime := time.Now()
 
 	runCtx, runCancel := context.WithCancel(ctx)
-	defer runCancel()
 
-	// Горутина, которая мягко остановит процессор после обработки всех батчей
+	startTime := time.Now()
+	
 	go func() {
-		wg.Wait()
-		runCancel()
+		_ = processor.Execute(runCtx)
 	}()
 
-	_ = processor.Execute(runCtx)
+	wg.Wait()
+	executionTime := time.Since(startTime)
+	
+	runCancel()
+	time.Sleep(100 * time.Millisecond)
 
-	executionTime := time.Since(startTime) // Чистое время без погрешностей
 
 	var pgRows int
 	_ = pgPool.QueryRow(context.Background(), "SELECT COUNT(*) FROM stock_tables").Scan(&pgRows)

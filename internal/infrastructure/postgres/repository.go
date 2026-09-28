@@ -17,6 +17,13 @@ type poolBucket struct {
 	updatedAtTimestamps []time.Time
 }
 
+func (b *poolBucket) Reset() {
+	b.productIDs = b.productIDs[:0]
+	b.warehouseIDs = b.warehouseIDs[:0]
+	b.currentStocks = b.currentStocks[:0]
+	b.updatedAtTimestamps = b.updatedAtTimestamps[:0]
+}  
+
 type BalanceRepository struct {
 	pool  *pgxpool.Pool
 	bPool *sync.Pool
@@ -48,32 +55,32 @@ func (r *BalanceRepository) UpsertBalancesBulk(ctx context.Context, stocks []dom
 	// currentStocks := make([]float64, len(stocks))
 	// updatedAtTimestamps := make([]time.Time, len(stocks))
 	bucket := r.bPool.Get().(*poolBucket)
-	
-	if len(stocks) > len(bucket.productIDs) {
-		bucket.productIDs = make([]string, len(stocks))
-		bucket.warehouseIDs = make([]string, len(stocks))
-		bucket.currentStocks = make([]float64, len(stocks))
-		bucket.updatedAtTimestamps = make([]time.Time, len(stocks))
-	}
+	bucket.Reset()
+	defer r.bPool.Put(bucket)
 
-	productIDs := bucket.productIDs[:len(stocks)]
-	warehouseIDs := bucket.warehouseIDs[:len(stocks)]
-	currentStocks := bucket.currentStocks[:len(stocks)]
-	updatedAtTimestamps := bucket.updatedAtTimestamps[:len(stocks)]
+	// if cap(bucket.productIDs) < len(stocks) {
+	// 	bucket.productIDs = make([]string, len(stocks))
+	// 	bucket.warehouseIDs = make([]string, len(stocks))
+	// 	bucket.currentStocks = make([]float64, len(stocks))
+	// 	bucket.updatedAtTimestamps = make([]time.Time, len(stocks))
+	// }
+
+	// productIDs := bucket.productIDs[:len(stocks)]
+	// warehouseIDs := bucket.warehouseIDs[:len(stocks)]
+	// currentStocks := bucket.currentStocks[:len(stocks)]
+	// updatedAtTimestamps := bucket.updatedAtTimestamps[:len(stocks)]
 
 	for i := range stocks {
-		productIDs[i] = stocks[i].ProductID
-		warehouseIDs[i] = stocks[i].WarehouseID
-		currentStocks[i] = stocks[i].CurrentStock
-		updatedAtTimestamps[i] = stocks[i].Period
+		bucket.productIDs = append(bucket.productIDs, stocks[i].ProductID)
+		bucket.warehouseIDs = append(bucket.warehouseIDs, stocks[i].WarehouseID)
+		bucket.currentStocks = append(bucket.currentStocks, stocks[i].CurrentStock)
+		bucket.updatedAtTimestamps = append(bucket.updatedAtTimestamps, stocks[i].Period)
 	}
 
 	// bucket.productIDs = productIDs
 	// bucket.warehouseIDs = warehouseIDs
 	// bucket.currentStocks = currentStocks
 	// bucket.updatedAtTimestamps = updatedAtTimestamps
-
-	defer r.bPool.Put(bucket)
 
 	query := `
 		INSERT INTO stock_tables (product_id, warehouse_id, current_stock, updated_at)
@@ -89,7 +96,7 @@ func (r *BalanceRepository) UpsertBalancesBulk(ctx context.Context, stocks []dom
 				ELSE stock_tables.updated_at
 			END;
 	`
-	_, err := r.pool.Exec(ctx, query, productIDs, warehouseIDs, currentStocks, updatedAtTimestamps)
+	_, err := r.pool.Exec(ctx, query, bucket.productIDs, bucket.warehouseIDs, bucket.currentStocks, bucket.updatedAtTimestamps)
 	if err != nil {
 		return fmt.Errorf("bulk upsert via unnest failed: %w", err)
 	}

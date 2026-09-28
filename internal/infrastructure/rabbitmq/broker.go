@@ -13,8 +13,66 @@ type RabbitMQBroker struct {
 	queue   string
 }
 
-func NewRabbitMQBroker(ch *amqp.Channel, queue string) *RabbitMQBroker {
-	return &RabbitMQBroker{ch: ch, queue: queue}
+func NewRabbitMQBroker(ch *amqp.Channel, queue string) (*RabbitMQBroker, error) {
+
+	dlqExchange := "dlq_exchange"
+	dlqQueue := queue + "_dlq"
+	routingKeyDLQ := queue + "_dead_letter"
+
+	err := ch.ExchangeDeclare(
+		dlqExchange,
+		"direct",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to declare DLX exchange: %w, err")
+	}
+
+	_, err = ch.QueueDeclare(
+		dlqQueue,
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to DLQ queue: %w", err)
+	}
+
+	err = ch.QueueBind(
+		dlqQueue,
+		routingKeyDLQ,
+		dlqExchange,
+		false,
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to bind DLQ to DLX: %w", err)
+	}
+
+	args := amqp.Table{
+		"x-dead-letter-exchange": dlqExchange,
+		"x-dead-letter-routing-key": routingKeyDLQ,
+	}
+
+	_, err = ch.QueueDeclare(
+		queue,
+		true,
+		false,
+		false,
+		false,
+		args,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to declare main queue with DLX args: %w", err)
+	}
+
+	return &RabbitMQBroker{ch: ch, queue: queue}, nil
 }
 
 
@@ -49,7 +107,34 @@ func (b *RabbitMQBroker)  AcknowledgeBatch(ctx context.Context, deliveryTags []u
 	return b.ch.Ack(lastTag, true)
 }
 
-func (b *RabbitMQBroker) RejectToDLQ(ctx context.Context, deliveryTag uint64) error {
-	return b.ch.Reject(deliveryTag, false)
+func (b *RabbitMQBroker) RejectBatchToDLQ(ctx context.Context, deliveryTags []uint64) error {
+	if len(deliveryTags) == 0 {
+		return nil
+	}
+	for _, tag := range deliveryTags {
+		if err := b.ch.Nack(tag, false, false); err != nil {
+			return fmt.Errorf("failed to nack tag %d to DLQ: %w", tag, err)
+		}
+	}
+	return nil
 }
+
+func (b *RabbitMQBroker) RejectToDLQ(ctx context.Context, deliveryTag uint64) error {
+	return b.ch.Nack(deliveryTag, false, false)
+	// for _, tag := range deliveryTags {
+	// 	if err := b.ch.Nack(tag,false,false); err != nil {
+	// 		return err
+	// 	}
+	// }
+	// return nil
+}
+
+func (b *RabbitMQBroker) NackBatchForRetry(ctx context.Context, delveryTags []uint64) error {
+	if len(delveryTags) == 0 {
+		return nil
+	}
+	lastTag := delveryTags[len(delveryTags)-1]
+	return b.ch.Nack(lastTag, true, true)
+}
+
 

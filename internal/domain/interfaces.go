@@ -16,7 +16,9 @@ type Message struct {
 type MessageBroker interface {
 	StartConsuming(ctx context.Context, batchSize int) (<-chan Message, error)
 	AcknowledgeBatch(ctx context.Context, deliveryTags []uint64) error
-	RejectToDLQ(ctx context.Context, deliveryTag uint64) error
+	RejectToDLQ(ctx context.Context, deliveryTags uint64) error
+	RejectBatchToDLQ(ctx context.Context, deliveryTags []uint64) error
+	NackBatchForRetry(ctx context.Context, deliveryTags []uint64) error
 }
 
 // SalesRepository defines storage contracts for raw, immutable analytical records.
