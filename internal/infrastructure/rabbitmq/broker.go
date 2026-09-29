@@ -121,12 +121,6 @@ func (b *RabbitMQBroker) RejectBatchToDLQ(ctx context.Context, deliveryTags []ui
 
 func (b *RabbitMQBroker) RejectToDLQ(ctx context.Context, deliveryTag uint64) error {
 	return b.ch.Nack(deliveryTag, false, false)
-	// for _, tag := range deliveryTags {
-	// 	if err := b.ch.Nack(tag,false,false); err != nil {
-	// 		return err
-	// 	}
-	// }
-	// return nil
 }
 
 func (b *RabbitMQBroker) NackBatchForRetry(ctx context.Context, delveryTags []uint64) error {

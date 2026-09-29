@@ -50,25 +50,9 @@ func (r *BalanceRepository) UpsertBalancesBulk(ctx context.Context, stocks []dom
 		return nil
 	}
 
-	// productIDs := make([]string, len(stocks))
-	// warehouseIDs := make([]string, len(stocks))
-	// currentStocks := make([]float64, len(stocks))
-	// updatedAtTimestamps := make([]time.Time, len(stocks))
 	bucket := r.bPool.Get().(*poolBucket)
 	bucket.Reset()
 	defer r.bPool.Put(bucket)
-
-	// if cap(bucket.productIDs) < len(stocks) {
-	// 	bucket.productIDs = make([]string, len(stocks))
-	// 	bucket.warehouseIDs = make([]string, len(stocks))
-	// 	bucket.currentStocks = make([]float64, len(stocks))
-	// 	bucket.updatedAtTimestamps = make([]time.Time, len(stocks))
-	// }
-
-	// productIDs := bucket.productIDs[:len(stocks)]
-	// warehouseIDs := bucket.warehouseIDs[:len(stocks)]
-	// currentStocks := bucket.currentStocks[:len(stocks)]
-	// updatedAtTimestamps := bucket.updatedAtTimestamps[:len(stocks)]
 
 	for i := range stocks {
 		bucket.productIDs = append(bucket.productIDs, stocks[i].ProductID)
@@ -76,11 +60,6 @@ func (r *BalanceRepository) UpsertBalancesBulk(ctx context.Context, stocks []dom
 		bucket.currentStocks = append(bucket.currentStocks, stocks[i].CurrentStock)
 		bucket.updatedAtTimestamps = append(bucket.updatedAtTimestamps, stocks[i].Period)
 	}
-
-	// bucket.productIDs = productIDs
-	// bucket.warehouseIDs = warehouseIDs
-	// bucket.currentStocks = currentStocks
-	// bucket.updatedAtTimestamps = updatedAtTimestamps
 
 	query := `
 		INSERT INTO stock_tables (product_id, warehouse_id, current_stock, updated_at)

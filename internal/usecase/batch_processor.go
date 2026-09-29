@@ -106,24 +106,6 @@ func (up *BatchProcessor) Execute(ctx context.Context) error {
 				time.Sleep(1 * time.Second)
 				continue
 			}
-			// if err := up.salesRepo.SaveSalesBulk(ctx, batchData.Sales); err != nil {
-			// 	slog.Error("Pipeline execution failure: PostgreSQL unnest state upsert failed", "err", err, "stocks_count", len(batchData.Stocks))
-			// 	_ = up.broker.NackBatchForRetry(ctx, deliveryTags)
-			// 	time.Sleep(1 * time.Second)
-			// 	continue
-			// }
-			// if err := up.salesRepo.SaveStocksBulk(ctx, batchData.Stocks); err != nil {
-			// 	slog.Error("Pipeline execution failure: PostgreSQL unnest state upsert failed", "err", err, "stocks_count", len(batchData.Stocks))
-			// 	_ = up.broker.NackBatchForRetry(ctx, deliveryTags)
-			// 	time.Sleep(1 * time.Second)
-			// 	continue
-			// }
-			// if err := up.balRepo.UpsertBalancesBulk(ctx, batchData.Stocks); err != nil {
-			// 	slog.Error("Pipeline execution failure: PostgreSQL unnest state upsert failed", "err", err, "stocks_count", len(batchData.Stocks))
-			// 	_ = up.broker.NackBatchForRetry(ctx, deliveryTags)
-			// 	time.Sleep(1 * time.Second)
-			// 	continue
-			// }
 			if err := up.broker.AcknowledgeBatch(ctx, deliveryTags); err != nil {
 				slog.Error("Transport notification failure: message batch confirmation failed", "err", err)
 			} else {
@@ -168,7 +150,6 @@ func (up *BatchProcessor) collectBatch(ctx context.Context, deliveries <-chan do
 			// Safety check: prevent unparsed JSON from causing memory hangs by instantly sending it to DLQ.
 			if err := sonic.Unmarshal(msg.Body, &raw); err != nil {
 				corruptRootCount++
-				// _ = up.broker.RejectToDLQ(ctx, msg.DeliveryTag)
 				dlqTags = append(dlqTags, msg.DeliveryTag)
 				continue
 			}
@@ -178,7 +159,6 @@ func (up *BatchProcessor) collectBatch(ctx context.Context, deliveries <-chan do
 				var wireData []domain.SalesPayload
 				if err := sonic.Unmarshal(raw.Payload, &wireData); err != nil {
 					corruptInnerCount++
-					// _ = up.broker.RejectToDLQ(ctx, msg.DeliveryTag)
 					dlqTags = append(dlqTags, msg.DeliveryTag)
 					continue
 				}
@@ -193,7 +173,6 @@ func (up *BatchProcessor) collectBatch(ctx context.Context, deliveries <-chan do
 				var stocks []domain.StocksPayload
 				if err := sonic.Unmarshal(raw.Payload, &stocks); err != nil {
 					corruptInnerCount++
-					// _ = up.broker.RejectToDLQ(ctx, msg.DeliveryTag)
 					dlqTags = append(dlqTags, msg.DeliveryTag)
 					continue
 				}
@@ -205,9 +184,7 @@ func (up *BatchProcessor) collectBatch(ctx context.Context, deliveries <-chan do
 				deliveryTags = append(deliveryTags, msg.DeliveryTag)
 			default:
 				dlqTags = append(dlqTags, msg.DeliveryTag)
-				// _ = up.broker.RejectToDLQ(ctx, msg.DeliveryTag)
 			}
-			// deliveryTags = append(deliveryTags, msg.DeliveryTag)
 
 			if len(deliveryTags) >= up.batchSize {
 				return batchData, deliveryTags, dlqTags, nil
